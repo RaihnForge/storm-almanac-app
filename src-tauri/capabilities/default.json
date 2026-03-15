@@ -13,6 +13,8 @@
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
     "store:default",
-    "positioner:default"
+    "positioner:default",
+    "updater:default",
+    "process:default"
   ]
 }

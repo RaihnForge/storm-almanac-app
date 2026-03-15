@@ -1,6 +1,8 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
+	import { check } from '@tauri-apps/plugin-updater';
+	import { relaunch } from '@tauri-apps/plugin-process';
 	import { onMount } from 'svelte';
 	import UploadList from '$lib/UploadList.svelte';
 	import SettingsView from '$lib/SettingsView.svelte';
@@ -8,17 +10,40 @@
 	let uploads = $state([]);
 	let config = $state(null);
 	let showSettings = $state(false);
+	let updateVersion = $state(null);
+	let updateStatus = $state('idle');
 
 	onMount(async () => {
 		uploads = await invoke('get_uploads');
 		config = await invoke('get_config');
 
-		const unlisten = await listen('upload-changed', (event) => {
+		const unlistenUploads = await listen('upload-changed', (event) => {
 			uploads = event.payload;
 		});
 
-		return unlisten;
+		const unlistenUpdate = await listen('update-available', (event) => {
+			updateVersion = event.payload;
+		});
+
+		return () => {
+			unlistenUploads();
+			unlistenUpdate();
+		};
 	});
+
+	async function installUpdate() {
+		updateStatus = 'updating';
+		try {
+			const update = await check();
+			if (update) {
+				await update.downloadAndInstall();
+				await relaunch();
+			}
+		} catch (e) {
+			console.error('Update failed:', e);
+			updateStatus = 'error';
+		}
+	}
 </script>
 
 <div class="flex flex-col h-screen">
@@ -43,6 +68,26 @@
 			{/if}
 		</button>
 	</div>
+
+	<!-- Update banner -->
+	{#if updateVersion}
+		<div class="flex items-center justify-between px-3 py-1.5 bg-blue-900/50 border-b border-blue-800 text-xs">
+			<span class="text-blue-200">v{updateVersion} available</span>
+			{#if updateStatus === 'updating'}
+				<span class="text-blue-300">Updating...</span>
+			{:else if updateStatus === 'error'}
+				<button
+					onclick={installUpdate}
+					class="text-blue-300 hover:text-blue-100 font-medium"
+				>Retry</button>
+			{:else}
+				<button
+					onclick={installUpdate}
+					class="text-blue-300 hover:text-blue-100 font-medium"
+				>Update</button>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Content -->
 	{#if showSettings && config}

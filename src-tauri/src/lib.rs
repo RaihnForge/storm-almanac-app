@@ -11,9 +11,10 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_positioner::{Position, WindowExt};
+use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
 fn get_uploads(state: tauri::State<'_, SharedState>) -> Vec<UploadEntry> {
@@ -42,6 +43,25 @@ fn position_near_tray(window: &tauri::WebviewWindow) {
     }));
     if result.is_err() {
         let _ = window.move_window(Position::Center);
+    }
+}
+
+async fn check_for_updates(app: tauri::AppHandle) {
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            log::error!("Failed to create updater: {}", e);
+            return;
+        }
+    };
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let _ = app.emit("update-available", &update.version);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            log::error!("Update check failed: {}", e);
+        }
     }
 }
 
@@ -89,6 +109,8 @@ pub fn run() {
             Some(vec![]),
         ))
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Hide dock icon on macOS
             #[cfg(target_os = "macos")]
@@ -104,8 +126,9 @@ pub fn run() {
             app.manage(Mutex::new(app_state));
 
             // Build tray icon
+            let check_update = MenuItemBuilder::with_id("check_update", "Check for Updates").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Uploader").build(app)?;
-            let menu = MenuBuilder::new(app).item(&quit).build()?;
+            let menu = MenuBuilder::new(app).item(&check_update).separator().item(&quit).build()?;
 
             #[cfg(target_os = "macos")]
             let (tray_icon, is_template) = (
@@ -127,6 +150,11 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     if event.id() == "quit" {
                         app.exit(0);
+                    } else if event.id() == "check_update" {
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            check_for_updates(handle).await;
+                        });
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -144,6 +172,13 @@ pub fn run() {
 
             // Start file watcher
             watcher::start_watcher(app.handle());
+
+            // Auto-check for updates after a short delay
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                check_for_updates(handle).await;
+            });
 
             Ok(())
         })
