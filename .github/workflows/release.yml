@@ -47,7 +47,7 @@ jobs:
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@8fa5f891c10f9ecf8db0ccaab9ff627d94baf64c # dev branch, for releaseAssetNamePattern support
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
