@@ -55,6 +55,7 @@ jobs:
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: 'Storm Uploader ${{ inputs.tag || github.ref_name }}'
-          releaseDraft: true
+          releaseAssetNamePattern: '[name]_[platform]-[arch][setup].[ext]'
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
