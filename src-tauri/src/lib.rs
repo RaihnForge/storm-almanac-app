@@ -4,7 +4,7 @@ mod uploader;
 mod watcher;
 
 use config::{load_config, load_history, save_config, AppConfig};
-use state::{AppState, SharedState, UploadEntry};
+use state::{AppState, SharedState, UploadEntry, UploadSemaphore};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use tauri::{
@@ -124,11 +124,18 @@ pub fn run() {
             app_state.uploads = VecDeque::from(history);
 
             app.manage(Mutex::new(app_state));
+            app.manage(UploadSemaphore::new(5));
 
             // Build tray icon
             let check_update = MenuItemBuilder::with_id("check_update", "Check for Updates").build(app)?;
+            let rescan = MenuItemBuilder::with_id("rescan", "Re-upload All Replays").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Uploader").build(app)?;
-            let menu = MenuBuilder::new(app).item(&check_update).separator().item(&quit).build()?;
+            let menu = MenuBuilder::new(app)
+                .item(&check_update)
+                .item(&rescan)
+                .separator()
+                .item(&quit)
+                .build()?;
 
             #[cfg(target_os = "macos")]
             let (tray_icon, is_template) = (
@@ -155,6 +162,8 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             check_for_updates(handle).await;
                         });
+                    } else if event.id() == "rescan" {
+                        watcher::rescan(app);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {

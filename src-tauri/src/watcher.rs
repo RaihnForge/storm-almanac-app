@@ -8,7 +8,7 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::config::{load_config, save_history};
-use crate::state::{SharedState, UploadEntry, UploadStatus};
+use crate::state::{SharedState, UploadEntry, UploadSemaphore, UploadStatus};
 use crate::uploader;
 
 pub fn start_watcher(app: &AppHandle) {
@@ -165,6 +165,9 @@ async fn process_file(app: &AppHandle, path: PathBuf) {
 }
 
 pub async fn do_upload(app: &AppHandle, entry_id: &str) {
+    let semaphore = app.state::<UploadSemaphore>();
+    let _permit = semaphore.acquire().await.expect("semaphore closed");
+
     let (file_path, sha256) = {
         let state = app.state::<SharedState>();
         let mut state = state.lock().unwrap();
@@ -287,7 +290,36 @@ async fn retry_loop(app: AppHandle) {
     }
 }
 
-fn persist_and_emit(app: &AppHandle) {
+pub fn rescan(app: &AppHandle) {
+    let config = load_config(app);
+    let watch_dir = PathBuf::from(&config.watch_dir);
+
+    if !watch_dir.exists() {
+        log::warn!("Watch directory does not exist: {}", config.watch_dir);
+        return;
+    }
+
+    {
+        let state = app.state::<SharedState>();
+        let mut state = state.lock().unwrap();
+        state.uploads.clear();
+    }
+    persist_and_emit(app);
+
+    let app_handle = app.clone();
+    let (tx, rx) = mpsc::unbounded_channel::<PathBuf>();
+
+    tauri::async_runtime::spawn(async move {
+        upload_consumer(app_handle, rx).await;
+    });
+
+    let scan_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        startup_scan(scan_handle, tx, &watch_dir).await;
+    });
+}
+
+pub fn persist_and_emit(app: &AppHandle) {
     let entries: Vec<UploadEntry> = {
         let state = app.state::<SharedState>();
         let state = state.lock().unwrap();

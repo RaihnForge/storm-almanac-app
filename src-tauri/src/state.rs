@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use tokio::sync::Semaphore;
 
 const MAX_ENTRIES: usize = 100;
 
@@ -59,7 +60,11 @@ impl AppState {
             e.sha256.as_deref() == Some(sha256)
                 && matches!(
                     e.status,
-                    UploadStatus::Queued | UploadStatus::Duplicate | UploadStatus::Uploading
+                    UploadStatus::Queued
+                        | UploadStatus::Duplicate
+                        | UploadStatus::Uploading
+                        | UploadStatus::Error
+                        | UploadStatus::Pending
                 )
         })
     }
@@ -74,3 +79,4 @@ impl AppState {
 }
 
 pub type SharedState = Mutex<AppState>;
+pub type UploadSemaphore = Semaphore;
