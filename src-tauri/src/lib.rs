@@ -129,9 +129,10 @@ fn open_website_window(app: &tauri::AppHandle) {
         .build();
 
     if let Ok(win) = window {
+        let _ = win.set_focus();
         let app_handle = app.clone();
         win.on_window_event(move |event| {
-            if let tauri::WindowEvent::Destroyed = event {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
                 #[cfg(target_os = "macos")]
                 let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
@@ -351,9 +352,19 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                open_website_window(_app);
+            match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    open_website_window(_app);
+                }
+                tauri::RunEvent::ExitRequested { api, code, .. } => {
+                    // Prevent exit when triggered by last window closing (code
+                    // is None). Allow explicit app.exit() calls (code is Some).
+                    if code.is_none() {
+                        api.prevent_exit();
+                    }
+                }
+                _ => {}
             }
         });
 }
