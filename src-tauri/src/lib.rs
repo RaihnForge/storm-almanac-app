@@ -47,13 +47,12 @@ const WEBSITE_WIDTH: f64 = 1024.0;
 const WEBSITE_HEIGHT: f64 = 768.0;
 
 fn position_near_tray(window: &tauri::WebviewWindow) {
-    // move_window can panic if tray position hasn't been tracked yet
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    // move_window panics if current_monitor() returns None (e.g. after
+    // prolonged display sleep). catch_unwind guards against this, but we
+    // cannot fall back to Position::Center since it hits the same code path.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         window.move_window(Position::TrayCenter)
     }));
-    if result.is_err() {
-        let _ = window.move_window(Position::Center);
-    }
 }
 
 async fn check_for_updates(app: tauri::AppHandle) {
