@@ -264,6 +264,18 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // On Windows, deep link URLs arrive as args to the second instance.
+            // On macOS, deep links come through the event listener instead.
+            for arg in &args {
+                if arg.starts_with("storm-almanac://") {
+                    handle_deep_link(app, arg);
+                    return;
+                }
+            }
+            // No deep link — just bring the app to the foreground
+            toggle_window(app);
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Hide dock icon on macOS
