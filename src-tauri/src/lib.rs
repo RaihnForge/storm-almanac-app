@@ -7,6 +7,7 @@ mod watcher;
 use config::{load_config, load_history, load_known_hashes, save_known_hashes, save_config, AppConfig};
 use state::{AppState, SharedState, UploadEntry, UploadSemaphore};
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{
     image::Image,
@@ -139,10 +140,51 @@ fn open_website_window(app: &tauri::AppHandle) {
     }
 }
 
+fn find_talent_builds_path(watch_dir: &str) -> Option<PathBuf> {
+    let accounts_dir = std::path::Path::new(watch_dir);
+    let entries = std::fs::read_dir(accounts_dir).ok()?;
+
+    let mut best_path: Option<PathBuf> = None;
+    let mut best_modified = std::time::SystemTime::UNIX_EPOCH;
+    let mut first_subdir: Option<PathBuf> = None;
+
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let candidate = entry.path().join("TalentBuilds.txt");
+        if first_subdir.is_none() {
+            first_subdir = Some(entry.path());
+        }
+        if candidate.exists() {
+            let modified = std::fs::metadata(&candidate)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            if best_path.is_none() || modified > best_modified {
+                best_path = Some(candidate);
+                best_modified = modified;
+            }
+        }
+    }
+
+    best_path.or_else(|| first_subdir.map(|d| d.join("TalentBuilds.txt")))
+}
+
 #[tauri::command]
-fn save_build() -> Result<(), String> {
-    log::info!("save_build stub called");
-    Ok(())
+fn read_talent_builds(app: tauri::AppHandle) -> String {
+    let config = load_config(&app);
+    let Some(path) = find_talent_builds_path(&config.watch_dir) else {
+        return String::new();
+    };
+    std::fs::read_to_string(&path).unwrap_or_default()
+}
+
+#[tauri::command]
+fn write_talent_builds(app: tauri::AppHandle, contents: String) -> Result<(), String> {
+    let config = load_config(&app);
+    let path = find_talent_builds_path(&config.watch_dir)
+        .ok_or_else(|| "No account directory found".to_string())?;
+    std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -273,7 +315,8 @@ pub fn run() {
             autostart::enable_autostart,
             autostart::disable_autostart,
             autostart::is_autostart_enabled,
-            save_build,
+            read_talent_builds,
+            write_talent_builds,
             load_overlay,
             open_uploads,
         ])
