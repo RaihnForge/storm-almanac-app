@@ -13,8 +13,9 @@ use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_positioner::{Position, WindowExt};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -109,8 +110,15 @@ fn toggle_window(app: &tauri::AppHandle) {
     }
 }
 
-fn open_website_window(app: &tauri::AppHandle) {
+fn open_website_window(app: &tauri::AppHandle, path: Option<&str>) {
+    let full_url: String = match path {
+        Some(p) => format!("{}{}", WEBSITE_URL, p),
+        None => WEBSITE_URL.to_string(),
+    };
+
     if let Some(window) = app.get_webview_window(WEBSITE_LABEL) {
+        let url: tauri::Url = full_url.parse().unwrap();
+        let _ = window.navigate(url);
         let _ = window.set_focus();
         return;
     }
@@ -118,7 +126,7 @@ fn open_website_window(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
-    let url = WebviewUrl::External(WEBSITE_URL.parse().unwrap());
+    let url = WebviewUrl::External(full_url.parse().unwrap());
     let window = WebviewWindowBuilder::new(app, WEBSITE_LABEL, url)
         .title("Storm Uploader — Website")
         .inner_size(WEBSITE_WIDTH, WEBSITE_HEIGHT)
@@ -138,6 +146,25 @@ fn open_website_window(app: &tauri::AppHandle) {
             }
         });
     }
+}
+
+fn deep_link_path(url: &str) -> Option<String> {
+    url.strip_prefix("storm-almanac://")
+        .filter(|rest| !rest.is_empty())
+        .map(|rest| format!("/{}", rest))
+}
+
+fn handle_deep_link(app: &tauri::AppHandle, url: &str) {
+    let path = deep_link_path(url);
+    let handle = app.clone();
+    // Spawn a thread to break free from the app delegate callback, then
+    // dispatch window creation back to the main thread.
+    std::thread::spawn(move || {
+        let h = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            open_website_window(&h, path.as_deref());
+        });
+    });
 }
 
 fn is_game_running() -> bool {
@@ -237,6 +264,7 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Hide dock icon on macOS
             #[cfg(target_os = "macos")]
@@ -298,7 +326,7 @@ pub fn run() {
                     if event.id() == "quit" {
                         app.exit(0);
                     } else if event.id() == "open_website" {
-                        open_website_window(app);
+                        open_website_window(app, None);
                     } else if event.id() == "check_update" {
                         let handle = app.clone();
                         tauri::async_runtime::spawn(async move {
@@ -323,6 +351,23 @@ pub fn run() {
 
             // Start file watcher
             watcher::start_watcher(app.handle());
+
+            // Handle deep link that launched the app (e.g. storm-almanac://builds)
+            if let Ok(urls) = app.deep_link().get_current() {
+                if let Some(url) = urls.and_then(|u| u.into_iter().next()) {
+                    handle_deep_link(app.handle(), url.as_str());
+                }
+            }
+
+            // Handle deep link events while the app is already running
+            let deep_link_handle = app.handle().clone();
+            app.handle().listen("deep-link://new-url", move |event| {
+                if let Ok(urls) = serde_json::from_str::<Vec<String>>(event.payload()) {
+                    if let Some(url_str) = urls.first() {
+                        handle_deep_link(&deep_link_handle, url_str);
+                    }
+                }
+            });
 
             // Periodically check for updates
             let handle = app.handle().clone();
@@ -355,7 +400,7 @@ pub fn run() {
             match event {
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
-                    open_website_window(_app);
+                    open_website_window(_app, None);
                 }
                 tauri::RunEvent::ExitRequested { api, code, .. } => {
                     // Prevent exit when triggered by last window closing (code

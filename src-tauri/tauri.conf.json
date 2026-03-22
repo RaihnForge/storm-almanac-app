@@ -28,6 +28,11 @@
     "createUpdaterArtifacts": true
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["storm-almanac"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFM0QzQ0NDOUEwMENDQzUKUldURnpBQ2F6RHc5VGdpL2NTQVZHM1BuaVpFNkI0cjYvaEpRK3IzWmZxYjZlRkVGVCt5OU4wd3IK",
       "endpoints": [
