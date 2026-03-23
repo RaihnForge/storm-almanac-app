@@ -9,7 +9,6 @@ const STORE_FILE: &str = "storm-almanac.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
-    pub api_url: String,
     pub watch_dir: String,
     pub autostart: bool,
     #[serde(default)]
@@ -19,7 +18,6 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            api_url: "https://hots.lightster.ninja".to_string(),
             watch_dir: default_watch_dir(),
             autostart: false,
             start_minimized: false,

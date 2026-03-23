@@ -181,8 +181,7 @@ pub async fn do_upload(app: &AppHandle, entry_id: &str) {
     };
     persist_and_emit(app);
 
-    let config = load_config(app);
-    let url = format!("{}/api/replays/upload", config.api_url);
+    let url = format!("{}/api/replays/upload", crate::API_URL);
 
     match uploader::upload_file(&url, &file_path, &sha256).await {
         Ok(response) => {

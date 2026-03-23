@@ -4,7 +4,6 @@
 	import { onMount } from 'svelte';
 
 	let watchDir = $state('');
-	let apiUrl = $state('');
 	let autostart = $state(false);
 	let startMinimized = $state(false);
 	let autostartLoaded = $state(false);
@@ -15,7 +14,6 @@
 	onMount(async () => {
 		const config = await invoke('get_config');
 		watchDir = config.watchDir;
-		apiUrl = config.apiUrl;
 		autostart = config.autostart;
 		startMinimized = config.startMinimized ?? false;
 		loaded = true;
@@ -57,7 +55,7 @@
 			autostartError = `Failed to update autostart: ${e}`;
 		}
 
-		const newConfig = { watchDir, apiUrl, autostart, startMinimized };
+		const newConfig = { watchDir, autostart, startMinimized };
 		await invoke('save_config_cmd', { config: newConfig });
 
 		saved = true;
@@ -104,18 +102,6 @@
 							</svg>
 						</button>
 					</div>
-				</div>
-
-				<div>
-					<label for="api-url" class="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">
-						API URL
-					</label>
-					<input
-						id="api-url"
-						type="text"
-						bind:value={apiUrl}
-						class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-blue-500 transition-colors"
-					/>
 				</div>
 
 				<div>

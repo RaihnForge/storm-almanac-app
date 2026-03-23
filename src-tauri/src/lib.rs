@@ -62,6 +62,10 @@ const WEBSITE_URL: &str = match option_env!("STORM_WEBSITE_URL") {
     Some(url) => url,
     None => "https://hots.lightster.ninja",
 };
+pub const API_URL: &str = match option_env!("STORM_API_URL") {
+    Some(url) => url,
+    None => "https://hots.lightster.ninja",
+};
 const WEBSITE_WIDTH: f64 = 1024.0;
 const WEBSITE_HEIGHT: f64 = 768.0;
 
