@@ -18,7 +18,6 @@ use tauri::{
 #[cfg(target_os = "macos")]
 use tauri::menu::SubmenuBuilder;
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_positioner::{Position, WindowExt};
 use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
@@ -53,10 +52,6 @@ fn save_config_cmd(app: tauri::AppHandle, config: AppConfig) {
     save_config(&app, &config);
 }
 
-const WINDOW_LABEL: &str = "main";
-const WINDOW_WIDTH: f64 = 360.0;
-const WINDOW_HEIGHT: f64 = 480.0;
-
 const SETTINGS_LABEL: &str = "settings";
 const SETTINGS_WIDTH: f64 = 400.0;
 const SETTINGS_HEIGHT: f64 = 400.0;
@@ -68,15 +63,6 @@ const WEBSITE_URL: &str = match option_env!("STORM_WEBSITE_URL") {
 };
 const WEBSITE_WIDTH: f64 = 1024.0;
 const WEBSITE_HEIGHT: f64 = 768.0;
-
-fn position_near_tray(window: &tauri::WebviewWindow) {
-    // move_window panics if current_monitor() returns None (e.g. after
-    // prolonged display sleep). catch_unwind guards against this, but we
-    // cannot fall back to Position::Center since it hits the same code path.
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        window.move_window(Position::TrayCenter)
-    }));
-}
 
 async fn check_for_updates(app: tauri::AppHandle) {
     let updater = match app.updater() {
@@ -97,41 +83,6 @@ async fn check_for_updates(app: tauri::AppHandle) {
     }
 }
 
-fn toggle_window(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-        } else {
-            position_near_tray(&window);
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    } else {
-        let window = WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::default())
-            .title("Storm Uploader")
-            .inner_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-            .resizable(false)
-            .decorations(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .visible(false)
-            .build();
-
-        if let Ok(win) = window {
-            position_near_tray(&win);
-            let _ = win.show();
-            let _ = win.set_focus();
-
-            let win_clone = win.clone();
-            win.on_window_event(move |event| {
-                if let tauri::WindowEvent::Focused(false) = event {
-                    let _ = win_clone.hide();
-                }
-            });
-        }
-    }
-}
-
 fn open_website_window(app: &tauri::AppHandle, path: Option<&str>) {
     let full_url: String = match path {
         Some(p) => format!("{}{}", WEBSITE_URL, p),
@@ -139,8 +90,10 @@ fn open_website_window(app: &tauri::AppHandle, path: Option<&str>) {
     };
 
     if let Some(window) = app.get_webview_window(WEBSITE_LABEL) {
-        let url: tauri::Url = full_url.parse().unwrap();
-        let _ = window.navigate(url);
+        if path.is_some() {
+            let url: tauri::Url = full_url.parse().unwrap();
+            let _ = window.navigate(url);
+        }
         let _ = window.set_focus();
         return;
     }
@@ -315,11 +268,6 @@ fn load_overlay() -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn open_uploads(app: tauri::AppHandle) {
-    toggle_window(&app);
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -341,7 +289,7 @@ pub fn run() {
                 }
             }
             // No deep link — just bring the app to the foreground
-            toggle_window(app);
+            open_website_window(app, None);
         }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
@@ -428,7 +376,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        toggle_window(tray.app_handle());
+                        open_website_window(tray.app_handle(), None);
                     }
                 })
                 .build(app)?;
@@ -463,6 +411,12 @@ pub fn run() {
 
             // Start file watcher
             watcher::start_watcher(app.handle());
+
+            // Open website window on startup unless start_minimized is set
+            let startup_config = load_config(app.handle());
+            if !startup_config.start_minimized {
+                open_website_window(app.handle(), None);
+            }
 
             // Handle deep link that launched the app (e.g. storm-almanac://builds)
             if let Ok(urls) = app.deep_link().get_current() {
@@ -505,7 +459,6 @@ pub fn run() {
             write_talent_builds,
             is_game_running_cmd,
             load_overlay,
-            open_uploads,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

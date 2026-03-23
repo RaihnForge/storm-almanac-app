@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub api_url: String,
     pub watch_dir: String,
     pub autostart: bool,
+    #[serde(default)]
+    pub start_minimized: bool,
 }
 
 impl Default for AppConfig {
@@ -20,6 +22,7 @@ impl Default for AppConfig {
             api_url: "https://hots.lightster.ninja".to_string(),
             watch_dir: default_watch_dir(),
             autostart: false,
+            start_minimized: false,
         }
     }
 }

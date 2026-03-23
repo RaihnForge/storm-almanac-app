@@ -5,6 +5,7 @@
 	let watchDir = $state('');
 	let apiUrl = $state('');
 	let autostart = $state(false);
+	let startMinimized = $state(false);
 	let autostartLoaded = $state(false);
 	let autostartError = $state('');
 	let saved = $state(false);
@@ -15,6 +16,7 @@
 		watchDir = config.watchDir;
 		apiUrl = config.apiUrl;
 		autostart = config.autostart;
+		startMinimized = config.startMinimized ?? false;
 		loaded = true;
 
 		try {
@@ -37,7 +39,7 @@
 			autostartError = `Failed to update autostart: ${e}`;
 		}
 
-		const newConfig = { watchDir, apiUrl, autostart };
+		const newConfig = { watchDir, apiUrl, autostart, startMinimized };
 		await invoke('save_config_cmd', { config: newConfig });
 
 		saved = true;
@@ -94,6 +96,21 @@
 					{#if autostartError}
 						<p class="text-xs text-red-400 mt-1">{autostartError}</p>
 					{/if}
+				</div>
+
+				<div>
+					<div class="flex items-center justify-between">
+						<label for="start-minimized" class="text-sm text-zinc-300">Start minimized</label>
+						<button
+							id="start-minimized"
+							role="switch"
+							aria-checked={startMinimized}
+							onclick={() => { startMinimized = !startMinimized; }}
+							class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors {startMinimized ? 'bg-blue-500' : 'bg-zinc-600'}"
+						>
+							<span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {startMinimized ? 'translate-x-4' : 'translate-x-0.5'}" />
+						</button>
+					</div>
 				</div>
 
 				<button
