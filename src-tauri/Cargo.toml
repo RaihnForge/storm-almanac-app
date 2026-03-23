@@ -1,6 +1,6 @@
 [package]
 name = "uploader"
-version = "0.1.15"
+version = "0.1.16"
 description = "Storm Replay Uploader"
 authors = ["lightster"]
 edition = "2021"
