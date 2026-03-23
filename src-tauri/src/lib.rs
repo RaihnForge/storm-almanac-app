@@ -8,12 +8,13 @@ use config::{load_config, load_history, load_known_hashes, save_known_hashes, sa
 use state::{AppState, SharedState, UploadChannels, UploadEntry, UploadSemaphore};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
+    Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 #[cfg(target_os = "macos")]
 use tauri::menu::SubmenuBuilder;
@@ -64,7 +65,11 @@ const WEBSITE_URL: &str = match option_env!("STORM_WEBSITE_URL") {
 const WEBSITE_WIDTH: f64 = 1024.0;
 const WEBSITE_HEIGHT: f64 = 768.0;
 
-async fn check_for_updates(app: tauri::AppHandle) {
+async fn check_for_updates(
+    app: tauri::AppHandle,
+    menu_item: tauri::menu::MenuItem<tauri::Wry>,
+    update_available: Arc<AtomicBool>,
+) {
     let updater = match app.updater() {
         Ok(u) => u,
         Err(e) => {
@@ -74,9 +79,38 @@ async fn check_for_updates(app: tauri::AppHandle) {
     };
     match updater.check().await {
         Ok(Some(update)) => {
-            let _ = app.emit("update-available", &update.version);
+            let _ = menu_item.set_text(format!("Update to v{}", update.version));
+            update_available.store(true, Ordering::SeqCst);
         }
         Ok(None) => {}
+        Err(e) => {
+            log::error!("Update check failed: {}", e);
+        }
+    }
+}
+
+async fn install_update(app: tauri::AppHandle) {
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            log::error!("Failed to create updater: {}", e);
+            return;
+        }
+    };
+    match updater.check().await {
+        Ok(Some(update)) => {
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(()) => {
+                    app.restart();
+                }
+                Err(e) => {
+                    log::error!("Update install failed: {}", e);
+                }
+            }
+        }
+        Ok(None) => {
+            log::info!("No update available");
+        }
         Err(e) => {
             log::error!("Update check failed: {}", e);
         }
@@ -346,22 +380,34 @@ pub fn run() {
                 false,
             );
 
+            let update_available = Arc::new(AtomicBool::new(false));
+            let update_flag_menu = update_available.clone();
+            let check_update_menu = check_update.clone();
+
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
                 .icon_as_template(is_template)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .tooltip("Storm Uploader")
-                .on_menu_event(|app, event| {
+                .on_menu_event(move |app, event| {
                     if event.id() == "quit" {
                         app.exit(0);
                     } else if event.id() == "open_website" {
                         open_website_window(app, None);
                     } else if event.id() == "check_update" {
                         let handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            check_for_updates(handle).await;
-                        });
+                        if update_flag_menu.load(Ordering::SeqCst) {
+                            tauri::async_runtime::spawn(async move {
+                                install_update(handle).await;
+                            });
+                        } else {
+                            let item = check_update_menu.clone();
+                            let flag = update_flag_menu.clone();
+                            tauri::async_runtime::spawn(async move {
+                                check_for_updates(handle, item, flag).await;
+                            });
+                        }
                     } else if event.id() == "settings" {
                         open_settings_window(app);
                     } else if event.id() == "rescan" {
@@ -437,10 +483,17 @@ pub fn run() {
 
             // Periodically check for updates
             let handle = app.handle().clone();
+            let check_update_periodic = check_update.clone();
+            let update_flag_periodic = update_available.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 loop {
-                    check_for_updates(handle.clone()).await;
+                    check_for_updates(
+                        handle.clone(),
+                        check_update_periodic.clone(),
+                        update_flag_periodic.clone(),
+                    )
+                    .await;
                     tokio::time::sleep(std::time::Duration::from_secs(6 * 60 * 60)).await;
                 }
             });
