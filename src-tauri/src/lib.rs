@@ -297,6 +297,11 @@ fn write_talent_builds(app: tauri::AppHandle, contents: String) -> Result<(), St
     let config = load_config(&app);
     let path = find_talent_builds_path(&config.watch_dir)
         .ok_or_else(|| "No account directory found".to_string())?;
+    let backup_path = path.with_file_name("TalentBuilds-pre-StormAlmanac.txt");
+    if !backup_path.exists() && path.exists() {
+        std::fs::copy(&path, &backup_path).map_err(|e| e.to_string())?;
+    }
+
     std::fs::write(&path, contents).map_err(|e| e.to_string())
 }
 
