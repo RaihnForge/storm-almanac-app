@@ -1,6 +1,6 @@
 # Storm Almanac
 
-A macOS menubar app that automatically uploads Heroes of the Storm `.StormReplay` files.
+A desktop companion app for [hots.lightster.ninja](https://hots.lightster.ninja). Automatically uploads Heroes of the Storm replay files and syncs talent builds to your game client.
 
 Built with [Tauri](https://v2.tauri.app/), [SvelteKit](https://svelte.dev/), and Rust.
 
