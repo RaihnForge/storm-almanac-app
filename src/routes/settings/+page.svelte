@@ -6,6 +6,8 @@
 	let watchDir = $state('');
 	let autostart = $state(false);
 	let startMinimized = $state(false);
+	let inputRecordingEnabled = $state(false);
+	let inputPermission = $state(true);
 	let autostartLoaded = $state(false);
 	let autostartError = $state('');
 	let saved = $state(false);
@@ -16,6 +18,7 @@
 		watchDir = config.watchDir;
 		autostart = config.autostart;
 		startMinimized = config.startMinimized ?? false;
+		inputRecordingEnabled = config.inputRecordingEnabled ?? false;
 		loaded = true;
 
 		try {
@@ -24,6 +27,10 @@
 			autostartError = `Failed to check autostart: ${e}`;
 		}
 		autostartLoaded = true;
+
+		try {
+			inputPermission = await invoke('check_input_permission');
+		} catch (_) {}
 	});
 
 	async function browseWatchDir() {
@@ -55,7 +62,7 @@
 			autostartError = `Failed to update autostart: ${e}`;
 		}
 
-		const newConfig = { watchDir, autostart, startMinimized };
+		const newConfig = { watchDir, autostart, startMinimized, inputRecordingEnabled };
 		await invoke('save_config_cmd', { config: newConfig });
 
 		saved = true;
@@ -136,6 +143,24 @@
 							<span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {startMinimized ? 'translate-x-4' : 'translate-x-0.5'}" />
 						</button>
 					</div>
+				</div>
+
+				<div>
+					<div class="flex items-center justify-between">
+						<label for="input-recording" class="text-sm text-zinc-300">Record inputs during games</label>
+						<button
+							id="input-recording"
+							role="switch"
+							aria-checked={inputRecordingEnabled}
+							onclick={() => { inputRecordingEnabled = !inputRecordingEnabled; }}
+							class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors {inputRecordingEnabled ? 'bg-blue-500' : 'bg-zinc-600'}"
+						>
+							<span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {inputRecordingEnabled ? 'translate-x-4' : 'translate-x-0.5'}" />
+						</button>
+					</div>
+					{#if !inputPermission}
+						<p class="text-xs text-amber-400 mt-1">Requires Accessibility permission in System Settings</p>
+					{/if}
 				</div>
 
 				<button

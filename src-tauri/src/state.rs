@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::ipc::Channel;
 use tokio::sync::Semaphore;
@@ -88,6 +89,28 @@ impl AppState {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordingStatus {
+    Idle,
+    Recording,
+    Uploading,
+}
+
+impl Default for RecordingStatus {
+    fn default() -> Self {
+        RecordingStatus::Idle
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RecordingState {
+    pub status: RecordingStatus,
+    pub recording_session_uuid: Option<String>,
+    pub session_path: Option<PathBuf>,
+}
+
 pub type SharedState = Mutex<AppState>;
+pub type SharedRecordingState = Mutex<RecordingState>;
 pub type UploadSemaphore = Semaphore;
 pub type UploadChannels = Mutex<Vec<Channel<Vec<UploadEntry>>>>;

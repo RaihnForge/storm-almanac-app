@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub autostart: bool,
     #[serde(default)]
     pub start_minimized: bool,
+    #[serde(default)]
+    pub input_recording_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -21,6 +23,7 @@ impl Default for AppConfig {
             watch_dir: default_watch_dir(),
             autostart: false,
             start_minimized: false,
+            input_recording_enabled: false,
         }
     }
 }

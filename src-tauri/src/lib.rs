@@ -1,11 +1,16 @@
 mod autostart;
 mod config;
+mod game_session;
+mod input_recorder;
 mod state;
 mod uploader;
 mod watcher;
 
 use config::{load_config, load_history, load_known_hashes, save_known_hashes, save_config, AppConfig};
-use state::{AppState, SharedState, UploadChannels, UploadEntry, UploadSemaphore};
+use state::{
+    AppState, RecordingStatus, SharedRecordingState, SharedState, UploadChannels, UploadEntry,
+    UploadSemaphore,
+};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -247,6 +252,19 @@ fn is_game_running() -> bool {
 }
 
 #[tauri::command]
+fn check_input_permission() -> bool {
+    input_recorder::check_accessibility_permission()
+}
+
+#[tauri::command]
+fn get_recording_status(
+    recording_state: tauri::State<'_, SharedRecordingState>,
+) -> RecordingStatus {
+    let state = recording_state.lock().unwrap();
+    state.status.clone()
+}
+
+#[tauri::command]
 async fn is_game_running_cmd() -> bool {
     tokio::task::spawn_blocking(is_game_running)
         .await
@@ -401,6 +419,8 @@ pub fn run() {
             app.manage(Mutex::new(app_state));
             app.manage(UploadSemaphore::new(5));
             app.manage(UploadChannels::default());
+            app.manage(SharedRecordingState::default());
+            app.manage(game_session::RecorderHolder::default());
 
             // Build tray icon
             let open_website = MenuItemBuilder::with_id("open_website", "Open Website").build(app)?;
@@ -523,6 +543,15 @@ pub fn run() {
             // Start file watcher
             watcher::start_watcher(app.handle());
 
+            // Start game session polling for input recording
+            game_session::start_game_session_polling(app.handle().clone());
+
+            // Retry any pending session file uploads from previous crashes
+            let retry_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                game_session::retry_pending_uploads(&retry_app).await;
+            });
+
             // Open website window on startup unless start_minimized is set
             let startup_config = load_config(app.handle());
             if !startup_config.start_minimized {
@@ -576,6 +605,8 @@ pub fn run() {
             read_talent_builds,
             write_talent_builds,
             is_game_running_cmd,
+            check_input_permission,
+            get_recording_status,
             load_overlay,
             reveal_path,
             clear_webview_data,

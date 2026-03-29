@@ -34,6 +34,11 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 tauri-plugin-dialog = "2.6.0"
+rdev = "0.5"
+flate2 = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+macos-accessibility-client = "0.0.2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
