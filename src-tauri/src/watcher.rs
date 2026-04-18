@@ -152,6 +152,8 @@ async fn process_file(app: &AppHandle, path: PathBuf) {
         error: None,
         created_at: chrono::Utc::now(),
         retry_count: 0,
+        retryable: None,
+        last_attempt_at: None,
     };
 
     {
@@ -199,6 +201,7 @@ pub async fn do_upload(app: &AppHandle, entry_id: &str) {
                 if let Some(sha) = &response.sha256 {
                     e.sha256 = Some(sha.clone());
                 }
+                e.last_attempt_at = Some(chrono::Utc::now());
             });
         }
         Err(e) => {
@@ -207,6 +210,8 @@ pub async fn do_upload(app: &AppHandle, entry_id: &str) {
             state.update_entry(entry_id, |entry| {
                 entry.status = UploadStatus::Error;
                 entry.error = Some(e.message);
+                entry.retryable = Some(e.retryable);
+                entry.last_attempt_at = Some(chrono::Utc::now());
                 if e.retryable {
                     entry.retry_count += 1;
                 } else {
@@ -270,6 +275,8 @@ async fn startup_scan(app: AppHandle, _tx: mpsc::UnboundedSender<PathBuf>, watch
             error: None,
             created_at: chrono::Utc::now(),
             retry_count: 0,
+            retryable: None,
+            last_attempt_at: None,
         };
 
         let id = entry.id.clone();
@@ -324,8 +331,9 @@ async fn retry_loop(app: AppHandle) {
 
         for entry in retryable {
             let backoff_secs = 60u64 * (1 << entry.retry_count.min(4));
+            let anchor = entry.last_attempt_at.unwrap_or(entry.created_at);
             let age = chrono::Utc::now()
-                .signed_duration_since(entry.created_at)
+                .signed_duration_since(anchor)
                 .num_seconds() as u64;
 
             if age >= backoff_secs {

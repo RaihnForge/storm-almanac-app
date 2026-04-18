@@ -411,7 +411,10 @@ pub fn run() {
             app_state.uploads = VecDeque::from(history);
             app_state.known_hashes = known_hashes;
 
-            // Reset interrupted uploads so the retry loop picks them up
+            // Reset interrupted uploads so the retry loop picks them up.
+            // Also reset retryable failures (including pre-upgrade entries where
+            // `retryable` is None) so transient server outages don't leave replays
+            // stuck in Error after the server recovers.
             for entry in app_state.uploads.iter_mut() {
                 if entry.status == state::UploadStatus::Uploading
                     || entry.status == state::UploadStatus::Pending
@@ -419,6 +422,13 @@ pub fn run() {
                     entry.status = state::UploadStatus::Error;
                     entry.error = Some("Interrupted by app restart".to_string());
                     entry.retry_count = 0;
+                    entry.retryable = Some(true);
+                    entry.last_attempt_at = None;
+                } else if entry.status == state::UploadStatus::Error
+                    && entry.retryable != Some(false)
+                {
+                    entry.retry_count = 0;
+                    entry.last_attempt_at = None;
                 }
             }
 
