@@ -74,6 +74,11 @@ pub const API_URL: &str = match option_env!("STORM_API_URL") {
 const WEBSITE_WIDTH: f64 = 1024.0;
 const WEBSITE_HEIGHT: f64 = 768.0;
 
+const OVERLAY_INTERACTIVE_LABEL: &str = "overlay-interactive";
+const OVERLAY_CLICKTHROUGH_LABEL: &str = "overlay-clickthrough";
+const OVERLAY_WIDTH: f64 = 280.0;
+const OVERLAY_HEIGHT: f64 = 140.0;
+
 async fn check_for_updates(
     app: tauri::AppHandle,
     menu_item: tauri::menu::MenuItem<tauri::Wry>,
@@ -203,6 +208,57 @@ fn open_settings_window(app: &tauri::AppHandle) {
                 }
             }
         });
+    }
+}
+
+fn open_overlay_window(app: &tauri::AppHandle, label: &str, url: &str, x: f64, y: f64) {
+    if app.get_webview_window(label).is_some() {
+        return;
+    }
+
+    let result = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .inner_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
+        .position(x, y)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .visible(true)
+        .build();
+
+    match result {
+        Ok(_) => log::info!("Opened overlay window {}", label),
+        Err(e) => log::error!("Failed to open overlay window {}: {}", label, e),
+    }
+}
+
+fn open_overlay_pair(app: &tauri::AppHandle) {
+    open_overlay_window(
+        app,
+        OVERLAY_INTERACTIVE_LABEL,
+        "/overlay?mode=interactive",
+        200.0,
+        200.0,
+    );
+    open_overlay_window(
+        app,
+        OVERLAY_CLICKTHROUGH_LABEL,
+        "/overlay?mode=clickthrough",
+        520.0,
+        200.0,
+    );
+}
+
+fn close_overlay_pair(app: &tauri::AppHandle) {
+    for label in [OVERLAY_INTERACTIVE_LABEL, OVERLAY_CLICKTHROUGH_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            match window.close() {
+                Ok(_) => log::info!("Closed overlay window {}", label),
+                Err(e) => log::error!("Failed to close overlay {}: {}", label, e),
+            }
+        }
     }
 }
 
@@ -352,8 +408,14 @@ async fn clear_webview_data(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn load_overlay() -> Result<(), String> {
-    log::info!("load_overlay stub called");
+fn toggle_overlay_pair(app: tauri::AppHandle) -> Result<(), String> {
+    let any_open = app.get_webview_window(OVERLAY_INTERACTIVE_LABEL).is_some()
+        || app.get_webview_window(OVERLAY_CLICKTHROUGH_LABEL).is_some();
+    if any_open {
+        close_overlay_pair(&app);
+    } else {
+        open_overlay_pair(&app);
+    }
     Ok(())
 }
 
@@ -443,6 +505,8 @@ pub fn run() {
             let settings = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
             let check_update = MenuItemBuilder::with_id("check_update", "Check for Updates").build(app)?;
             let rescan = MenuItemBuilder::with_id("rescan", "Re-upload All Replays").build(app)?;
+            let toggle_overlay =
+                MenuItemBuilder::with_id("toggle_overlay", "Toggle Overlay POC").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Almanac").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open_website)
@@ -450,6 +514,8 @@ pub fn run() {
                 .separator()
                 .item(&check_update)
                 .item(&rescan)
+                .separator()
+                .item(&toggle_overlay)
                 .separator()
                 .item(&quit)
                 .build()?;
@@ -497,6 +563,8 @@ pub fn run() {
                         open_settings_window(app);
                     } else if event.id() == "rescan" {
                         watcher::rescan(app);
+                    } else if event.id() == "toggle_overlay" {
+                        let _ = toggle_overlay_pair(app.clone());
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -623,7 +691,7 @@ pub fn run() {
             is_game_running_cmd,
             check_input_permission,
             get_recording_status,
-            load_overlay,
+            toggle_overlay_pair,
             reveal_path,
             clear_webview_data,
         ])
