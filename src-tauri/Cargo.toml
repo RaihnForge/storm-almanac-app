@@ -1,6 +1,6 @@
 [package]
 name = "storm-almanac"
-version = "0.1.30"
+version = "0.1.31"
 description = "Storm Almanac"
 authors = ["lightster"]
 edition = "2021"
