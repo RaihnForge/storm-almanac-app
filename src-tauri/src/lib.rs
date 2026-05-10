@@ -361,6 +361,8 @@ fn open_blocker_window(app: &tauri::AppHandle, visible_now: bool) {
     .always_on_top(true)
     .skip_taskbar(true)
     .shadow(false)
+    .focused(false)
+    .focusable(false)
     .visible(visible_now)
     .build();
 
@@ -421,14 +423,18 @@ fn apply_blocker_visual_mode(app: &tauri::AppHandle, mode: BlockerVisualMode) {
         return;
     };
 
-    let resizable = mode == BlockerVisualMode::Interactable;
-    let decorations = mode == BlockerVisualMode::Interactable;
+    let interactable = mode == BlockerVisualMode::Interactable;
 
-    if let Err(e) = window.set_resizable(resizable) {
-        log::error!("set_resizable({}) failed: {}", resizable, e);
-    }
-    if let Err(e) = window.set_decorations(decorations) {
-        log::error!("set_decorations({}) failed: {}", decorations, e);
+    // The window stays focusable=false and decorations=false in BOTH modes —
+    // OS chrome would force focus to transfer when the user clicks the title
+    // bar, which would kick HoTS out of foreground. Drag and resize in
+    // interactable mode are handled by HTML hit-zones calling
+    // window.startDragging() / startResizeDragging(...), which work fine on
+    // non-focusable windows (hit-test based, not focus based).
+    //
+    // We DO toggle resizable so startResizeDragging is allowed by the OS.
+    if let Err(e) = window.set_resizable(interactable) {
+        log::error!("set_resizable({}) failed: {}", interactable, e);
     }
     if let Err(e) = window.show() {
         log::error!("blocker show failed: {}", e);

@@ -61,6 +61,15 @@
 			}, 220);
 		});
 	}
+
+	/** @param {'East' | 'North' | 'NorthEast' | 'NorthWest' | 'South' | 'SouthEast' | 'SouthWest' | 'West'} direction */
+	async function startResize(direction) {
+		try {
+			await getCurrentWindow().startResizeDragging(direction);
+		} catch (e) {
+			console.error('startResizeDragging failed', e);
+		}
+	}
 </script>
 
 <svelte:head>
@@ -93,7 +102,75 @@
 		role="presentation"
 	>
 		{#if blockerMode === 'interactable'}
-			<div class="blocker-label">Map Blocker — Ctrl+Shift+B to lock</div>
+			<!-- Drag region covers the interior; resize handles overlay the edges. -->
+			<div class="blocker-drag" data-tauri-drag-region></div>
+			<div class="blocker-label" data-tauri-drag-region>
+				Map Blocker — drag to move, edges to resize, Ctrl+Shift+B to lock
+			</div>
+			<div
+				class="resize handle-n"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('North');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-s"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('South');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-e"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('East');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-w"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('West');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-ne"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('NorthEast');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-nw"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('NorthWest');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-se"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('SouthEast');
+				}}
+				role="presentation"
+			></div>
+			<div
+				class="resize handle-sw"
+				onmousedown={(e) => {
+					e.stopPropagation();
+					startResize('SouthWest');
+				}}
+				role="presentation"
+			></div>
 		{/if}
 	</div>
 {/if}
@@ -206,14 +283,86 @@
 	.blocker.interactable {
 		background: rgba(30, 30, 35, 0.55);
 		border: 2px dashed rgba(236, 72, 153, 0.85);
+		position: relative;
+	}
+
+	.blocker-drag {
+		position: absolute;
+		inset: 8px;
+		cursor: move;
 	}
 
 	.blocker-label {
+		position: relative;
+		z-index: 2;
 		font-size: 11px;
 		font-weight: 600;
 		letter-spacing: 0.06em;
 		background: rgba(0, 0, 0, 0.55);
 		padding: 4px 8px;
 		border-radius: 6px;
+	}
+
+	/* Resize handles — narrow strips on edges, small squares on corners.
+	   z-index above the drag region so they win the hit-test on overlap. */
+	.resize {
+		position: absolute;
+		z-index: 3;
+	}
+	.handle-n {
+		top: 0;
+		left: 8px;
+		right: 8px;
+		height: 6px;
+		cursor: n-resize;
+	}
+	.handle-s {
+		bottom: 0;
+		left: 8px;
+		right: 8px;
+		height: 6px;
+		cursor: s-resize;
+	}
+	.handle-e {
+		top: 8px;
+		bottom: 8px;
+		right: 0;
+		width: 6px;
+		cursor: e-resize;
+	}
+	.handle-w {
+		top: 8px;
+		bottom: 8px;
+		left: 0;
+		width: 6px;
+		cursor: w-resize;
+	}
+	.handle-ne {
+		top: 0;
+		right: 0;
+		width: 10px;
+		height: 10px;
+		cursor: ne-resize;
+	}
+	.handle-nw {
+		top: 0;
+		left: 0;
+		width: 10px;
+		height: 10px;
+		cursor: nw-resize;
+	}
+	.handle-se {
+		bottom: 0;
+		right: 0;
+		width: 10px;
+		height: 10px;
+		cursor: se-resize;
+	}
+	.handle-sw {
+		bottom: 0;
+		left: 0;
+		width: 10px;
+		height: 10px;
+		cursor: sw-resize;
 	}
 </style>
