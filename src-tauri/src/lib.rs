@@ -1,4 +1,5 @@
 mod autostart;
+mod battle_lobby_probe;
 mod config;
 mod game_focus;
 mod game_session;
@@ -954,6 +955,11 @@ pub fn run() {
                     }
                 });
             }
+
+            // Diagnostic probe — watches %TEMP% for *.battlelobby files and
+            // dumps them with a printable-strings index so we can figure out
+            // where map names live in the binary. Remove once that's known.
+            battle_lobby_probe::start(app.handle().clone());
 
             // Map blocker: register hotkey if it was enabled at last shutdown,
             // and spawn a subscriber that reacts to game-focus changes.
