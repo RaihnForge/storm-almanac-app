@@ -1,13 +1,23 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import { listen } from '@tauri-apps/api/event';
 	import { page } from '$app/state';
 
 	let mode = $state('interactive');
 	let counter = $state(0);
+	/** @type {'blocking' | 'interactable'} */
+	let blockerMode = $state('blocking');
+	let flashing = $state(false);
+	/** @type {(() => void) | undefined} */
+	let unlisten;
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let flashTimer;
 
 	onMount(async () => {
-		mode = page.url.searchParams.get('mode') === 'clickthrough' ? 'clickthrough' : 'interactive';
+		const m = page.url.searchParams.get('mode');
+		mode = m === 'clickthrough' || m === 'blocker' ? m : 'interactive';
+
 		if (mode === 'clickthrough') {
 			try {
 				await getCurrentWindow().setIgnoreCursorEvents(true);
@@ -15,6 +25,20 @@
 				console.error('setIgnoreCursorEvents failed', e);
 			}
 		}
+
+		if (mode === 'blocker') {
+			unlisten = await listen('blocker://mode-changed', (event) => {
+				const next = event?.payload;
+				if (next === 'blocking' || next === 'interactable') {
+					blockerMode = next;
+				}
+			});
+		}
+	});
+
+	onDestroy(() => {
+		unlisten?.();
+		if (flashTimer) clearTimeout(flashTimer);
 	});
 
 	async function close() {
@@ -23,6 +47,19 @@
 		} catch (e) {
 			console.error('close failed', e);
 		}
+	}
+
+	function onBlockerMouseDown() {
+		if (blockerMode !== 'blocking') return;
+		flashing = false;
+		// Force a tick so the class re-applies and the animation re-runs.
+		requestAnimationFrame(() => {
+			flashing = true;
+			if (flashTimer) clearTimeout(flashTimer);
+			flashTimer = setTimeout(() => {
+				flashing = false;
+			}, 220);
+		});
 	}
 </script>
 
@@ -44,10 +81,20 @@
 			<button class="close" onclick={close} aria-label="close">×</button>
 		</div>
 	</div>
-{:else}
+{:else if mode === 'clickthrough'}
 	<div class="card clickthrough">
 		<div class="title">CLICK-THROUGH</div>
 		<div class="hint">try clicking the desktop behind me</div>
+	</div>
+{:else}
+	<div
+		class="blocker {blockerMode} {flashing ? 'flash' : ''}"
+		onmousedown={onBlockerMouseDown}
+		role="presentation"
+	>
+		{#if blockerMode === 'interactable'}
+			<div class="blocker-label">Map Blocker — Ctrl+Shift+B to lock</div>
+		{/if}
 	</div>
 {/if}
 
@@ -123,5 +170,50 @@
 		padding: 2px 8px;
 		font-size: 14px;
 		line-height: 1;
+	}
+
+	.blocker {
+		box-sizing: border-box;
+		width: 100vw;
+		height: 100vh;
+		font-family: 'DM Sans', system-ui, sans-serif;
+		color: #fafafa;
+		display: flex;
+		align-items: flex-end;
+		justify-content: flex-start;
+		padding: 6px 8px;
+		transition: background 120ms ease-out;
+	}
+
+	.blocker.blocking {
+		background: transparent;
+		border: 1px dashed rgba(255, 100, 100, 0.35);
+	}
+
+	.blocker.blocking.flash {
+		animation: flashPulse 220ms ease-out;
+	}
+
+	@keyframes flashPulse {
+		0% {
+			background: rgba(255, 80, 80, 0.18);
+		}
+		100% {
+			background: transparent;
+		}
+	}
+
+	.blocker.interactable {
+		background: rgba(30, 30, 35, 0.55);
+		border: 2px dashed rgba(236, 72, 153, 0.85);
+	}
+
+	.blocker-label {
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		background: rgba(0, 0, 0, 0.55);
+		padding: 4px 8px;
+		border-radius: 6px;
 	}
 </style>

@@ -1,5 +1,6 @@
 mod autostart;
 mod config;
+mod game_focus;
 mod game_session;
 mod input_recorder;
 mod state;
@@ -7,6 +8,7 @@ mod uploader;
 mod watcher;
 
 use config::{load_config, load_history, load_known_hashes, save_known_hashes, save_config, AppConfig};
+use serde::{Deserialize, Serialize};
 use state::{
     AppState, RecordingStatus, SharedRecordingState, SharedState, UploadChannels, UploadEntry,
     UploadSemaphore,
@@ -17,13 +19,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{
     image::Image,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Listener, Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 #[cfg(target_os = "macos")]
 use tauri::menu::SubmenuBuilder;
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_store::StoreExt;
 use tauri_plugin_updater::UpdaterExt;
 
 #[tauri::command]
@@ -78,6 +82,55 @@ const OVERLAY_INTERACTIVE_LABEL: &str = "overlay-interactive";
 const OVERLAY_CLICKTHROUGH_LABEL: &str = "overlay-clickthrough";
 const OVERLAY_WIDTH: f64 = 280.0;
 const OVERLAY_HEIGHT: f64 = 140.0;
+
+const BLOCKER_LABEL: &str = "overlay-blocker";
+const BLOCKER_STORE_FILE: &str = "storm-almanac.json";
+const BLOCKER_STORE_KEY: &str = "map_blocker";
+const BLOCKER_HOTKEY: &str = "CmdOrCtrl+Shift+B";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum BlockerVisualMode {
+    Blocking,
+    Interactable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockerSettings {
+    enabled: bool,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl Default for BlockerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            x: 50.0,
+            y: 600.0,
+            width: 250.0,
+            height: 200.0,
+        }
+    }
+}
+
+struct BlockerState {
+    settings: BlockerSettings,
+    mode: BlockerVisualMode,
+}
+
+impl BlockerState {
+    fn new(settings: BlockerSettings) -> Self {
+        Self {
+            settings,
+            mode: BlockerVisualMode::Blocking,
+        }
+    }
+}
+
+type SharedBlockerState = Mutex<BlockerState>;
 
 async fn check_for_updates(
     app: tauri::AppHandle,
@@ -259,6 +312,257 @@ fn close_overlay_pair(app: &tauri::AppHandle) {
                 Err(e) => log::error!("Failed to close overlay {}: {}", label, e),
             }
         }
+    }
+}
+
+fn load_blocker_settings(app: &tauri::AppHandle) -> BlockerSettings {
+    app.store(BLOCKER_STORE_FILE)
+        .ok()
+        .and_then(|s| s.get(BLOCKER_STORE_KEY))
+        .and_then(|v| serde_json::from_value::<BlockerSettings>(v).ok())
+        .unwrap_or_default()
+}
+
+fn save_blocker_settings(app: &tauri::AppHandle, settings: &BlockerSettings) {
+    if let Ok(store) = app.store(BLOCKER_STORE_FILE) {
+        if let Ok(val) = serde_json::to_value(settings) {
+            store.set(BLOCKER_STORE_KEY, val);
+            let _ = store.save();
+        }
+    }
+}
+
+fn open_blocker_window(app: &tauri::AppHandle, visible_now: bool) {
+    if app.get_webview_window(BLOCKER_LABEL).is_some() {
+        return;
+    }
+
+    let (x, y, w, h) = {
+        let state = app.state::<SharedBlockerState>();
+        let s = state.lock().unwrap();
+        (
+            s.settings.x,
+            s.settings.y,
+            s.settings.width,
+            s.settings.height,
+        )
+    };
+
+    let result = WebviewWindowBuilder::new(
+        app,
+        BLOCKER_LABEL,
+        WebviewUrl::App("/overlay?mode=blocker".into()),
+    )
+    .inner_size(w, h)
+    .position(x, y)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .visible(visible_now)
+    .build();
+
+    let window = match result {
+        Ok(w) => {
+            log::info!("Opened blocker window (visible={})", visible_now);
+            w
+        }
+        Err(e) => {
+            log::error!("Failed to open blocker window: {}", e);
+            return;
+        }
+    };
+
+    let app_handle = app.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Moved(pos) => {
+            let scale = app_handle
+                .get_webview_window(BLOCKER_LABEL)
+                .and_then(|w| w.scale_factor().ok())
+                .unwrap_or(1.0);
+            let state = app_handle.state::<SharedBlockerState>();
+            let mut s = state.lock().unwrap();
+            s.settings.x = pos.x as f64 / scale;
+            s.settings.y = pos.y as f64 / scale;
+            let snapshot = s.settings.clone();
+            drop(s);
+            save_blocker_settings(&app_handle, &snapshot);
+        }
+        tauri::WindowEvent::Resized(size) => {
+            let scale = app_handle
+                .get_webview_window(BLOCKER_LABEL)
+                .and_then(|w| w.scale_factor().ok())
+                .unwrap_or(1.0);
+            let state = app_handle.state::<SharedBlockerState>();
+            let mut s = state.lock().unwrap();
+            s.settings.width = size.width as f64 / scale;
+            s.settings.height = size.height as f64 / scale;
+            let snapshot = s.settings.clone();
+            drop(s);
+            save_blocker_settings(&app_handle, &snapshot);
+        }
+        _ => {}
+    });
+}
+
+fn close_blocker_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(BLOCKER_LABEL) {
+        match window.close() {
+            Ok(_) => log::info!("Closed blocker window"),
+            Err(e) => log::error!("Failed to close blocker: {}", e),
+        }
+    }
+}
+
+fn apply_blocker_visual_mode(app: &tauri::AppHandle, mode: BlockerVisualMode) {
+    let Some(window) = app.get_webview_window(BLOCKER_LABEL) else {
+        return;
+    };
+
+    let resizable = mode == BlockerVisualMode::Interactable;
+    let decorations = mode == BlockerVisualMode::Interactable;
+
+    if let Err(e) = window.set_resizable(resizable) {
+        log::error!("set_resizable({}) failed: {}", resizable, e);
+    }
+    if let Err(e) = window.set_decorations(decorations) {
+        log::error!("set_decorations({}) failed: {}", decorations, e);
+    }
+    if let Err(e) = window.show() {
+        log::error!("blocker show failed: {}", e);
+    }
+
+    let payload = match mode {
+        BlockerVisualMode::Blocking => "blocking",
+        BlockerVisualMode::Interactable => "interactable",
+    };
+    if let Err(e) = app.emit_to(BLOCKER_LABEL, "blocker://mode-changed", payload) {
+        log::error!("emit blocker mode failed: {}", e);
+    }
+}
+
+fn toggle_blocker_mode(app: &tauri::AppHandle) {
+    let new_mode = {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        if !s.settings.enabled {
+            return;
+        }
+        s.mode = match s.mode {
+            BlockerVisualMode::Blocking => BlockerVisualMode::Interactable,
+            BlockerVisualMode::Interactable => BlockerVisualMode::Blocking,
+        };
+        s.mode
+    };
+
+    if app.get_webview_window(BLOCKER_LABEL).is_none() {
+        open_blocker_window(app, true);
+    }
+
+    apply_blocker_visual_mode(app, new_mode);
+
+    if new_mode == BlockerVisualMode::Blocking {
+        let focused = game_focus::is_focused(app);
+        if !focused {
+            if let Some(w) = app.get_webview_window(BLOCKER_LABEL) {
+                let _ = w.hide();
+            }
+        }
+    }
+
+    log::info!("blocker mode toggled to {:?}", new_mode);
+}
+
+fn register_blocker_hotkey(app: &tauri::AppHandle) {
+    let shortcut: Shortcut = match BLOCKER_HOTKEY.parse() {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("invalid blocker hotkey '{}': {}", BLOCKER_HOTKEY, e);
+            return;
+        }
+    };
+
+    if app.global_shortcut().is_registered(shortcut.clone()) {
+        return;
+    }
+
+    let app_handle = app.clone();
+    let res = app
+        .global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                let ah = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    toggle_blocker_mode(&ah);
+                });
+            }
+        });
+    if let Err(e) = res {
+        log::error!("register blocker hotkey failed: {}", e);
+    } else {
+        log::info!("registered blocker hotkey {}", BLOCKER_HOTKEY);
+    }
+}
+
+fn unregister_blocker_hotkey(app: &tauri::AppHandle) {
+    let shortcut: Shortcut = match BLOCKER_HOTKEY.parse() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if app.global_shortcut().is_registered(shortcut.clone()) {
+        let _ = app.global_shortcut().unregister(shortcut);
+        log::info!("unregistered blocker hotkey");
+    }
+}
+
+fn set_blocker_enabled(app: &tauri::AppHandle, enabled: bool) {
+    let snapshot = {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        s.settings.enabled = enabled;
+        s.mode = BlockerVisualMode::Blocking;
+        s.settings.clone()
+    };
+    save_blocker_settings(app, &snapshot);
+
+    if enabled {
+        register_blocker_hotkey(app);
+        let focused = game_focus::is_focused(app);
+        if focused {
+            open_blocker_window(app, true);
+            apply_blocker_visual_mode(app, BlockerVisualMode::Blocking);
+        }
+    } else {
+        unregister_blocker_hotkey(app);
+        close_blocker_window(app);
+    }
+    log::info!("blocker enabled={}", enabled);
+}
+
+fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
+    let (enabled, mode) = {
+        let state = app.state::<SharedBlockerState>();
+        let s = state.lock().unwrap();
+        (s.settings.enabled, s.mode)
+    };
+    if !enabled {
+        return;
+    }
+    if mode == BlockerVisualMode::Interactable {
+        // Interactable mode keeps the window visible regardless of focus.
+        return;
+    }
+    if focused {
+        if app.get_webview_window(BLOCKER_LABEL).is_none() {
+            open_blocker_window(app, true);
+            apply_blocker_visual_mode(app, BlockerVisualMode::Blocking);
+        } else if let Some(w) = app.get_webview_window(BLOCKER_LABEL) {
+            let _ = w.show();
+        }
+    } else if let Some(w) = app.get_webview_window(BLOCKER_LABEL) {
+        let _ = w.hide();
     }
 }
 
@@ -450,6 +754,7 @@ pub fn run() {
             open_website_window(app, None);
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // Hide dock icon on macOS
             #[cfg(target_os = "macos")]
@@ -500,6 +805,15 @@ pub fn run() {
             app.manage(SharedRecordingState::default());
             app.manage(game_session::RecorderHolder::default());
 
+            // Map blocker state — load persisted settings before tray builds
+            // (the tray's "Enable Map Blocker" item reflects the saved flag).
+            let blocker_settings = load_blocker_settings(app.handle());
+            let blocker_enabled_at_startup = blocker_settings.enabled;
+            app.manage(SharedBlockerState::new(BlockerState::new(blocker_settings)));
+
+            // Foreground-window poller — also app.manage()s the FocusFlag.
+            let mut focus_rx = game_focus::init(app.handle());
+
             // Build tray icon
             let open_website = MenuItemBuilder::with_id("open_website", "Open Website").build(app)?;
             let settings = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
@@ -507,6 +821,9 @@ pub fn run() {
             let rescan = MenuItemBuilder::with_id("rescan", "Re-upload All Replays").build(app)?;
             let toggle_overlay =
                 MenuItemBuilder::with_id("toggle_overlay", "Toggle Overlay POC").build(app)?;
+            let enable_blocker = CheckMenuItemBuilder::with_id("enable_blocker", "Enable Map Blocker")
+                .checked(blocker_enabled_at_startup)
+                .build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Almanac").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open_website)
@@ -515,6 +832,7 @@ pub fn run() {
                 .item(&check_update)
                 .item(&rescan)
                 .separator()
+                .item(&enable_blocker)
                 .item(&toggle_overlay)
                 .separator()
                 .item(&quit)
@@ -534,6 +852,7 @@ pub fn run() {
             let update_available = Arc::new(AtomicBool::new(false));
             let update_flag_menu = update_available.clone();
             let check_update_menu = check_update.clone();
+            let enable_blocker_menu = enable_blocker.clone();
 
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
@@ -565,6 +884,12 @@ pub fn run() {
                         watcher::rescan(app);
                     } else if event.id() == "toggle_overlay" {
                         let _ = toggle_overlay_pair(app.clone());
+                    } else if event.id() == "enable_blocker" {
+                        let state = app.state::<SharedBlockerState>();
+                        let currently_enabled = state.lock().unwrap().settings.enabled;
+                        let new_enabled = !currently_enabled;
+                        set_blocker_enabled(app, new_enabled);
+                        let _ = enable_blocker_menu.set_checked(new_enabled);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -623,6 +948,19 @@ pub fn run() {
                     }
                 });
             }
+
+            // Map blocker: register hotkey if it was enabled at last shutdown,
+            // and spawn a subscriber that reacts to game-focus changes.
+            if blocker_enabled_at_startup {
+                register_blocker_hotkey(app.handle());
+            }
+            let focus_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                while focus_rx.changed().await.is_ok() {
+                    let focused = *focus_rx.borrow();
+                    handle_focus_change(&focus_app, focused);
+                }
+            });
 
             // Start file watcher
             watcher::start_watcher(app.handle());
