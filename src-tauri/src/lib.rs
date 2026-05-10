@@ -97,12 +97,26 @@ enum BlockerVisualMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BlockerSettings {
-    enabled: bool,
+struct BlockerRect {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BlockerSettings {
+    enabled: bool,
+    // Default geometry — used until a per-map rect is loaded for the
+    // active battleground.
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    // Per-map rect overrides, keyed by the .s2ma cache hash extracted
+    // from HoTS's battlelobby file.
+    #[serde(default)]
+    per_map: std::collections::HashMap<String, BlockerRect>,
 }
 
 impl Default for BlockerSettings {
@@ -113,6 +127,7 @@ impl Default for BlockerSettings {
             y: 600.0,
             width: 250.0,
             height: 200.0,
+            per_map: std::collections::HashMap::new(),
         }
     }
 }
@@ -120,6 +135,10 @@ impl Default for BlockerSettings {
 struct BlockerState {
     settings: BlockerSettings,
     mode: BlockerVisualMode,
+    /// Hash of the currently active battleground (from the most recent
+    /// battlelobby read). When set, geometry changes are saved under this
+    /// key in `settings.per_map`.
+    active_map_hash: Option<String>,
 }
 
 impl BlockerState {
@@ -127,6 +146,7 @@ impl BlockerState {
         Self {
             settings,
             mode: BlockerVisualMode::Blocking,
+            active_map_hash: None,
         }
     }
 }
@@ -389,6 +409,7 @@ fn open_blocker_window(app: &tauri::AppHandle, visible_now: bool) {
             let mut s = state.lock().unwrap();
             s.settings.x = pos.x as f64 / scale;
             s.settings.y = pos.y as f64 / scale;
+            persist_per_map_geometry(&mut s);
             let snapshot = s.settings.clone();
             drop(s);
             save_blocker_settings(&app_handle, &snapshot);
@@ -402,12 +423,77 @@ fn open_blocker_window(app: &tauri::AppHandle, visible_now: bool) {
             let mut s = state.lock().unwrap();
             s.settings.width = size.width as f64 / scale;
             s.settings.height = size.height as f64 / scale;
+            persist_per_map_geometry(&mut s);
             let snapshot = s.settings.clone();
             drop(s);
             save_blocker_settings(&app_handle, &snapshot);
         }
         _ => {}
     });
+}
+
+/// If a battleground is active, mirror the current default geometry into
+/// the per-map table under that hash so a subsequent map switch can
+/// restore it.
+fn persist_per_map_geometry(s: &mut BlockerState) {
+    if let Some(hash) = s.active_map_hash.clone() {
+        let rect = BlockerRect {
+            x: s.settings.x,
+            y: s.settings.y,
+            width: s.settings.width,
+            height: s.settings.height,
+        };
+        s.settings.per_map.insert(hash, rect);
+    }
+}
+
+/// Called by the battlelobby probe when it detects a new active map. If we
+/// have a saved rect for that hash, resize/reposition the blocker to it.
+/// Either way, store the hash so subsequent geometry changes save under it.
+pub fn on_active_map_changed(app: &tauri::AppHandle, hash: String) {
+    let target_rect = {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        let unchanged = s.active_map_hash.as_deref() == Some(hash.as_str());
+        if unchanged {
+            return;
+        }
+        s.active_map_hash = Some(hash.clone());
+        s.settings.per_map.get(&hash).cloned()
+    };
+
+    log::info!(
+        "active map changed -> {} (saved rect: {})",
+        hash,
+        if target_rect.is_some() { "yes" } else { "no" }
+    );
+
+    let Some(rect) = target_rect else {
+        return;
+    };
+
+    {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        s.settings.x = rect.x;
+        s.settings.y = rect.y;
+        s.settings.width = rect.width;
+        s.settings.height = rect.height;
+        let snapshot = s.settings.clone();
+        drop(s);
+        save_blocker_settings(app, &snapshot);
+    }
+
+    if let Some(window) = app.get_webview_window(BLOCKER_LABEL) {
+        let pos = tauri::LogicalPosition::new(rect.x, rect.y);
+        let size = tauri::LogicalSize::new(rect.width, rect.height);
+        if let Err(e) = window.set_position(pos) {
+            log::error!("blocker set_position failed: {}", e);
+        }
+        if let Err(e) = window.set_size(size) {
+            log::error!("blocker set_size failed: {}", e);
+        }
+    }
 }
 
 fn close_blocker_window(app: &tauri::AppHandle) {
