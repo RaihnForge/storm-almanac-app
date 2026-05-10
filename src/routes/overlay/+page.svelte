@@ -70,7 +70,22 @@
 			console.error('startResizeDragging failed', e);
 		}
 	}
+
+	/** @param {Event} e */
+	function suppressContextMenu(e) {
+		// Right-click on the blocker is meant to be absorbed silently — no
+		// WebView2/WebKit native context menu. Also fire the flash so the
+		// user gets the same "absorbed!" cue as a left-click in blocking mode.
+		// (The POC overlays keep the native context menu for dev debugging.)
+		if (mode !== 'blocker') return;
+		e.preventDefault();
+		if (blockerMode === 'blocking') {
+			onBlockerMouseDown();
+		}
+	}
 </script>
+
+<svelte:window oncontextmenu={suppressContextMenu} />
 
 <svelte:head>
 	<style>
