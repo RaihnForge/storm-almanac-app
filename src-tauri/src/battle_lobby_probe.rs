@@ -14,7 +14,6 @@ use tauri::Manager;
 const HASH_LEN: usize = 64;
 
 pub fn start(app: tauri::AppHandle) {
-    let temp_dir = std::env::temp_dir();
     let dumps_dir = match dumps_dir(&app) {
         Some(p) => p,
         None => {
@@ -31,14 +30,20 @@ pub fn start(app: tauri::AppHandle) {
         return;
     }
 
+    let watch_dirs = candidate_watch_dirs();
     log::info!(
-        "battlelobby probe: watching {:?} (dumps -> {:?})",
-        temp_dir,
-        dumps_dir
+        "battlelobby probe: dumps -> {:?}, candidate dirs ({}):",
+        dumps_dir,
+        watch_dirs.len()
     );
+    for d in &watch_dirs {
+        log::info!("  - {:?}", d);
+    }
 
-    // Pick up any existing file at startup — typically the last game's lobby.
-    process_existing_files(&app, &temp_dir, &dumps_dir);
+    // Pick up any existing file in any candidate dir at startup.
+    for dir in &watch_dirs {
+        process_existing_files(&app, dir, &dumps_dir);
+    }
 
     let app_clone = app.clone();
     std::thread::spawn(move || {
@@ -55,12 +60,24 @@ pub fn start(app: tauri::AppHandle) {
             }
         };
 
-        if let Err(e) = watcher.watch(&temp_dir, RecursiveMode::NonRecursive) {
-            log::error!(
-                "battlelobby probe: failed to watch {:?}: {}",
-                temp_dir,
-                e
-            );
+        let mut watched_any = false;
+        for dir in &watch_dirs {
+            match watcher.watch(dir, RecursiveMode::NonRecursive) {
+                Ok(()) => {
+                    log::info!("battlelobby probe: watching {:?}", dir);
+                    watched_any = true;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "battlelobby probe: failed to watch {:?}: {}",
+                        dir,
+                        e
+                    );
+                }
+            }
+        }
+        if !watched_any {
+            log::error!("battlelobby probe: no directories could be watched, giving up");
             return;
         }
 
@@ -87,14 +104,55 @@ pub fn start(app: tauri::AppHandle) {
     });
 }
 
-fn process_existing_files(app: &tauri::AppHandle, temp_dir: &Path, dumps_dir: &Path) {
-    let entries = match std::fs::read_dir(temp_dir) {
+/// Common locations HoTS has been observed writing the battlelobby file
+/// to, depending on platform and OneDrive-redirected folders.
+fn candidate_watch_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+
+    dirs.push(std::env::temp_dir());
+
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.clone());
+        dirs.push(home.join("Documents"));
+        dirs.push(home.join("OneDrive"));
+        dirs.push(home.join("OneDrive").join("Documents"));
+
+        // macOS OneDrive sync root.
+        dirs.push(home.join("Library/CloudStorage/OneDrive-Personal"));
+        // Other OneDrive variants surfaced on some configs.
+        if let Ok(entries) = std::fs::read_dir(home.join("Library/CloudStorage")) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir()
+                    && p.file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.starts_with("OneDrive"))
+                        .unwrap_or(false)
+                {
+                    dirs.push(p);
+                }
+            }
+        }
+    }
+    if let Some(docs) = dirs::document_dir() {
+        dirs.push(docs);
+    }
+
+    dirs.sort();
+    dirs.dedup();
+    dirs.retain(|d| d.is_dir());
+    dirs
+}
+
+fn process_existing_files(app: &tauri::AppHandle, dir: &Path, dumps_dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if is_battlelobby_path(&path) {
+            log::info!("battlelobby probe: existing file at startup: {:?}", path);
             handle_file(app, &path, dumps_dir);
         }
     }
