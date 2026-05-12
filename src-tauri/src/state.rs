@@ -35,6 +35,10 @@ pub struct UploadEntry {
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub retry_count: u32,
+    #[serde(default)]
+    pub retryable: Option<bool>,
+    #[serde(default)]
+    pub last_attempt_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Default)]

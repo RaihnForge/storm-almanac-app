@@ -31,6 +31,10 @@ xattr -cr /Applications/Storm\ Almanac.app
 - [Rust](https://www.rust-lang.org/tools/install)
 - Tauri CLI: `cargo install tauri-cli --version "^2"`
 
+Optional (for editor/IDE code intelligence on the Rust side, including the Claude Code rust-analyzer plugin enabled in `.claude/settings.json`):
+
+- rust-analyzer: `rustup component add rust-analyzer` (or `brew install rust-analyzer`)
+
 ### Setup
 
 ```bash

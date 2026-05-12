@@ -101,32 +101,7 @@ impl InputRecorder {
         while recording.load(Ordering::Relaxed) {
             match rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Ok(event) => {
-                    match event.event_type {
-                        "kd" | "bd" => {
-                            if !keys_held.insert(event.key.clone()) {
-                                continue;
-                            }
-                        }
-                        "ku" | "bu" => {
-                            keys_held.remove(&event.key);
-                        }
-                        _ => {}
-                    }
-
-                    let input_event = InputEvent {
-                        t: system_time_millis(event.time),
-                        event_type: event.event_type,
-                        key: event.key,
-                        raw: event.raw,
-                        name: event.name,
-                    };
-                    if let Ok(json) = serde_json::to_string(&input_event) {
-                        let _ = writeln!(writer, "{}", json);
-                        event_count += 1;
-                        if event_count % flush_interval == 0 {
-                            let _ = writer.flush();
-                        }
-                    }
+                    Self::write_event(event, &mut writer, &mut keys_held, &mut event_count, flush_interval);
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     let _ = writer.flush();
@@ -137,7 +112,48 @@ impl InputRecorder {
             }
         }
 
+        // Drain any events still queued in the channel after the recording
+        // flag was set to false but before the listener thread fully stopped.
+        for event in rx.try_iter() {
+            Self::write_event(event, &mut writer, &mut keys_held, &mut event_count, flush_interval);
+        }
+
         let _ = writer.flush();
+    }
+
+    fn write_event(
+        event: RawInputEvent,
+        writer: &mut BufWriter<File>,
+        keys_held: &mut HashSet<String>,
+        event_count: &mut u64,
+        flush_interval: u64,
+    ) {
+        match event.event_type {
+            "kd" | "bd" => {
+                if !keys_held.insert(event.key.clone()) {
+                    return;
+                }
+            }
+            "ku" | "bu" => {
+                keys_held.remove(&event.key);
+            }
+            _ => {}
+        }
+
+        let input_event = InputEvent {
+            t: system_time_millis(event.time),
+            event_type: event.event_type,
+            key: event.key,
+            raw: event.raw,
+            name: event.name,
+        };
+        if let Ok(json) = serde_json::to_string(&input_event) {
+            let _ = writeln!(writer, "{}", json);
+            *event_count += 1;
+            if *event_count % flush_interval == 0 {
+                let _ = writer.flush();
+            }
+        }
     }
 
     pub fn stop(&mut self) {
